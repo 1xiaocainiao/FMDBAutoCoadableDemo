@@ -1,0 +1,6 @@
+framework module Pods_FMDBAutoCoadableDemo {
+  umbrella header "Pods-FMDBAutoCoadableDemo-umbrella.h"
+
+  export *
+  module * { export * }
+}
