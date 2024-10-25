@@ -23,18 +23,23 @@ class ViewController: UIViewController {
             // 创建表
             try dbManager.createTable(User())
             
+            let adress = Address()
+            adress.city = "北京"
+            adress.street = "朝阳区"
             // 插入数据
             let profile = Profile()
             profile.age = 25
             profile.email = "test@example.com"
+            profile.address = adress
             let user = User()
             user.id = 1
             user.name = "张三 李四 王麻子"
             user.profile = [profile]
             user.isSelf = true
-//            try dbManager.insert(user)
+            user.fileType = .name
+            try dbManager.insert(user)
             
-            _ = dbManager.deleteTable(from: User.tableName, otherSqlDic: [:])
+//            _ = dbManager.deleteTable(from: User.tableName, otherSqlDic: [:])
             
             let temp = try dbManager.query(User(), where: "id = 1")
             print(temp)

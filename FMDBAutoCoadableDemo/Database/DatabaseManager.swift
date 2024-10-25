@@ -19,6 +19,8 @@ enum DBColumnType {
     }
 }
 
+
+
 // 数据库字段信息
 struct DBColumnInfo {
     let name: String
@@ -35,11 +37,26 @@ enum DatabaseError: Error {
     case insertionFailed
 }
 
+/// 数据库存储model时包含枚举类型属性，暂时支持int string
+enum DBModelEnumType: Int {
+    case `Int`
+    case `String`
+}
+
 // 数据库表协议
 protocol DatabaseTable: Codable {
     static var tableName: String { get }
     static func primaryKey() -> String
+    /// 自定义枚举映射
+    static var enumPropertyMapper: [String: DBModelEnumType] { get }
 }
+
+extension DatabaseTable {
+    static var enumPropertyMapper: [String: DBModelEnumType] {
+        return [:]
+    }
+}
+
 
 let dbName = "testApp.db"
 
@@ -69,7 +86,7 @@ class DatabaseManager {
     func createTable<T: DatabaseTable>(_ object: T) throws {
         if isExistTable(T.tableName) {
             printl(message: "表已存在")
-            return
+//            return
         }
         
         let mirror = Mirror(reflecting: object)
@@ -96,7 +113,17 @@ class DatabaseManager {
             case is Bool.Type, is Optional<Bool>.Type:
                 columnType = .bool
             case is Codable.Type, is Optional<Codable>.Type:
-                columnType = .blob
+                if T.enumPropertyMapper.keys.contains(label),
+                    let enumType = T.enumPropertyMapper[label] {
+                    switch enumType {
+                    case .Int:
+                        columnType = .integer
+                    case .String:
+                        columnType = .text
+                    }
+                } else {
+                    columnType = .blob
+                }
             default:
                 throw DatabaseError.invalidType
             }
@@ -136,15 +163,30 @@ class DatabaseManager {
                 values.append(child.value)
             case is Bool.Type, is Optional<Bool>.Type:
                 values.append((child.value as? Bool ?? false) ? 1 : 0)
-            case is Codable.Type, is Optional<Codable>.Type
-                :
+            case is Codable.Type, is Optional<Codable>.Type:
                 if let codableValue = child.value as? Codable {
-                    do {
-                        let data = try JSONEncoder().encode(codableValue)
-                        values.append(data)
-                    } catch {
-                        throw DatabaseError.encodingFailed
+                    if T.enumPropertyMapper.keys.contains(label),
+                        let enumType = T.enumPropertyMapper[label] {
+                        let rawRepresentableValue = child.value as? (any RawRepresentable)
+                        switch enumType {
+                        case .Int:
+                            if let intValue = rawRepresentableValue?.rawValue as? Int {
+                                values.append(intValue)
+                            }
+                        case .String:
+                            if let stringValue = rawRepresentableValue?.rawValue as? String {
+                                values.append(stringValue)
+                            }
+                        }
+                    } else {
+                        do {
+                            let data = try JSONEncoder().encode(codableValue)
+                            values.append(data)
+                        } catch {
+                            throw DatabaseError.encodingFailed
+                        }
                     }
+                    
                 }
             default:
                 throw DatabaseError.invalidType
@@ -203,8 +245,8 @@ class DatabaseManager {
             
             // 将字典转换为模型对象
             let jsonData = try JSONSerialization.data(withJSONObject: dictionary)
-            let object = try JSONDecoder().decode(T.self, from: jsonData)
-            results.append(object)
+            let model = try JSONDecoder().decode(T.self, from: jsonData)
+            results.append(model)
         }
         
         return results

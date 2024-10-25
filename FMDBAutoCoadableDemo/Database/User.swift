@@ -15,23 +15,29 @@ class User: DatabaseTable {
     var name: String?
     var profile: [Profile]? // 嵌套模型
     var isSelf: Bool?
+    
+    var fileType: FilterType? // 自定义枚举
+    
+    static var enumPropertyMapper: [String: DBModelEnumType] {
+        return ["fileType": .String]
+    }
 }
 
 class Profile: Codable {
     var age: Int?
     var email: String?
+    
+    var address: Address?
+}
+
+enum FilterType: String, Codable {
+    case name
+    case age
 }
 
 
-//struct Address: Codable {
-//    var city: String
-//    var street: String
-//}
-//
-//struct User: Codable {
-//    var name: String
-//    var age: Int
-//    var address: Address
-//}
-
+class Address: Codable {
+    var city: String?
+    var street: String?
+}
 

@@ -252,3 +252,20 @@
 //    }
 //}
 
+
+/// 判断是否枚举
+//if let blobData = dic[label] as? Data {
+//                        if T.enumDic.keys.contains(label) {
+//                            let type = T.enumDic[label]!
+//                            let enumValue = try JSONDecoder().decode(type, from: blobData)
+//                            if let rawRepresentableValue = enumValue as? (any RawRepresentable),
+//                                       let intValue = rawRepresentableValue.rawValue as? String {
+//                                        print("枚举的原始值是: \(intValue)")  // 输出枚举对应的 Int 值
+//                                dictionary[label] = intValue  // 将整数值存入 enumDictionary
+//                                    } else {
+//                                        print("解码后的值不是遵循 RawRepresentable 的枚举，或 RawValue 不是 Int")
+//                                    }
+//                        } else {
+//                            dictionary[label] = try blobData.jsonObject()
+//                        }
+//                    }
