@@ -43,8 +43,19 @@ enum DBModelEnumType: Int {
     case `String`
 }
 
+protocol DummyInitializable {
+    static func initDummyInstance() -> Self
+}
+
+extension DummyInitializable where Self: Codable {
+    static func initDummyInstance() -> Self {
+        let json = "{}".data(using: .utf8)!
+        return try! JSONDecoder().decode(Self.self, from: json)
+    }
+}
+
 // 数据库表协议
-protocol DatabaseTable: Codable {
+protocol DatabaseTable: Codable, DummyInitializable {
     static var tableName: String { get }
     static func primaryKey() -> String
     /// 自定义枚举映射
@@ -62,19 +73,35 @@ let dbName = "testApp.db"
 
 // Database Manager类
 class DatabaseManager {
-    private let db: FMDatabase
+    private let db: FMDatabaseQueue
     
-    init() {
-        let paths = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true)
-        let cachesDirectory = paths[0]
-        let writableDBPath = (cachesDirectory as NSString).appendingPathComponent(dbName)
+    init(userId: String? = nil) {
+        let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        
+        var targetDbDirectoryName: String
+        if let userId = userId, !userId.isEmpty {
+            targetDbDirectoryName = userId + "DB"
+        } else {
+            targetDbDirectoryName = "DB"
+        }
+        let dbDirectory = cachesDirectory.appendingPathComponent(targetDbDirectoryName)
+        let writableDBPath = dbDirectory.appendingPathComponent(dbName).path
+        
+        if !FileManager.default.fileExists(atPath: writableDBPath) {
+            do {
+                try FileManager.default.createDirectory(at: dbDirectory, withIntermediateDirectories: true, attributes: nil)
+            } catch {
+                printl(message: "创建db文件夹失败: \(error.localizedDescription)")
+            }
+        }
         
         printl(message: writableDBPath)
         
-        db = FMDatabase(path: writableDBPath)
-        
-        if !db.open() {
-            printl(message: "打开数据库失败: \(db.lastErrorMessage())")
+        if let db = FMDatabaseQueue(path: writableDBPath) {
+            self.db = db
+        } else {
+            printl(message: "打开数据库失败!")
+            db = FMDatabaseQueue()
         }
     }
     
@@ -83,13 +110,14 @@ class DatabaseManager {
     }
     
     // 创建表
-    func createTable<T: DatabaseTable>(_ object: T) throws {
+    func createTable<T: DatabaseTable>(_ object: T.Type) throws {
         if isExistTable(T.tableName) {
             printl(message: "表已存在")
 //            return
         }
         
-        let mirror = Mirror(reflecting: object)
+        let mirrorType = T.initDummyInstance()
+        let mirror = Mirror(reflecting: mirrorType)
         var columns: [DBColumnInfo] = []
         
         // 解析模型属性
@@ -142,7 +170,7 @@ class DatabaseManager {
     }
     
     // 插入数据
-    func insert<T: DatabaseTable>(_ object: T) throws {
+    func insert<T: DatabaseTable>(object: T) throws {
         let mirror = Mirror(reflecting: object)
         var columns: [String] = []
         var values: [Any] = []
@@ -203,8 +231,15 @@ class DatabaseManager {
         }
     }
     
+    /// insert objects
+    func insert<T: DatabaseTable>(objects: [T]) throws {
+        for object in objects {
+            try insert(object: object)
+        }
+    }
+    
     // 查询数据
-    func query<T: DatabaseTable>(_ objectType: T, where condition: String? = nil) throws -> [T] {
+    func query<T: DatabaseTable>(where condition: String? = nil) throws -> [T] {
         var sql = "SELECT * FROM \(T.tableName)"
         if let condition = condition {
             sql += " WHERE \(condition)"
@@ -216,8 +251,9 @@ class DatabaseManager {
         
         for dic in tempArray {
             var dictionary: [String: Any] = dic
-            
-            let mirror = Mirror(reflecting: objectType)
+            /// 注意这里
+            let mirrorObjectType = T.initDummyInstance()
+            let mirror = Mirror(reflecting: mirrorObjectType)
             
             for child in mirror.children {
                 guard let label = child.label else { continue }
@@ -275,11 +311,11 @@ extension DatabaseManager {
     /// 查询
     fileprivate func getDataBySQL(_ sql: String, values: [Any]) -> [[String: Any]] {
         var results: [[String: Any]] = []
-        if db.open() {
+        db.inDatabase { db in
             db.shouldCacheStatements = true
             guard let resultSet = db.executeQuery(sql, withArgumentsIn: values) else {
                 printl(message: "未从数据库查询到数据")
-                return results
+                return
             }
             if db.hadError() {
                 printl(message: "error \(db.lastErrorCode()) : \(db.lastErrorMessage())")
@@ -290,7 +326,6 @@ extension DatabaseManager {
                     results.append(dic)
                 }
             }
-            db.close()
         }
         return results
     }
@@ -298,14 +333,12 @@ extension DatabaseManager {
     // 插入
     fileprivate func insertDataWithSQL(_ sql: String, values: [Any]) -> Bool {
         var result: Bool = true
-        if db.open() {
+        db.inDatabase { db in
             db.shouldCacheStatements = true
-            db.executeUpdate(sql, withArgumentsIn: values)
+            result = db.executeUpdate(sql, withArgumentsIn: values)
             if db.hadError() {
                 printl(message: "error \(db.lastErrorCode()) : \(db.lastErrorMessage())")
-                result = false
             }
-            db.close()
         }
         return result
     }
@@ -313,14 +346,12 @@ extension DatabaseManager {
     // 删除
     fileprivate func deleteDataWithSQL(_ sql: String, values: [Any]) -> Bool {
         var result: Bool = true
-        if db.open() {
+        db.inDatabase { db in
             db.shouldCacheStatements = true
-            db.executeUpdate(sql, withArgumentsIn: values)
+            result = db.executeUpdate(sql, withArgumentsIn: values)
             if db.hadError() {
                 printl(message: "error \(db.lastErrorCode()) : \(db.lastErrorMessage())")
-                result = false
             }
-            db.close()
         }
         return result
     }
@@ -406,6 +437,33 @@ extension DatabaseManager {
         }
     }
 
+    static func deleteFoldersContainingDB() {
+        DispatchQueue.global(qos: .default).async {
+            guard let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+                print("无法获取 Caches 目录")
+                return
+            }
+            
+            do {
+                let contents = try FileManager.default.contentsOfDirectory(
+                    at: cachesDirectory,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: .skipsHiddenFiles
+                )
+                
+                for url in contents {
+                    let resourceValues = try url.resourceValues(forKeys: [.isDirectoryKey])
+                    if let isDirectory = resourceValues.isDirectory, isDirectory,
+                       url.lastPathComponent.contains("DB") {
+                        try FileManager.default.removeItem(at: url)
+                        print("✅ 已删除文件夹: \(url.lastPathComponent)")
+                    }
+                }
+            } catch {
+                print("❌ 操作失败: \(error.localizedDescription)")
+            }
+        }
+    }
 }
 
 // MARK: - data扩展
