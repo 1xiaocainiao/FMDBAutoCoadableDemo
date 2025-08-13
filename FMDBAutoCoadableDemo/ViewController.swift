@@ -24,8 +24,8 @@ class ViewController: UIViewController {
         do {
             let dbManager = DatabaseManager()
             
-            // 创建表
-            try dbManager.createTable(User.self)
+//            // 创建表
+//            try dbManager.createTable(User.self)
             
             let adress = Address()
             adress.city = "北京"
@@ -57,8 +57,8 @@ class ViewController: UIViewController {
         do {
             let dbManager = DatabaseManager(userId: "789456")
             
-            // 创建表
-            try dbManager.createTable(User.self)
+//            // 创建表
+//            try dbManager.createTable(User.self)
             
             var results: [User] = []
             for index in 0..<20 {

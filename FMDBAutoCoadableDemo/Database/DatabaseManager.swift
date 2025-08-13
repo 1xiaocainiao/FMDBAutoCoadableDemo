@@ -73,6 +73,9 @@ let dbName = "testApp.db"
 
 // Database Manager类
 class DatabaseManager {
+    /// fmdb transation insert tuple
+    typealias InsertTransactionTuple = (sql: String, values: [Any])
+    
     private let db: FMDatabaseQueue
     
     init(userId: String? = nil) {
@@ -111,10 +114,10 @@ class DatabaseManager {
     
     // 创建表
     func createTable<T: DatabaseTable>(_ object: T.Type) throws {
-        if isExistTable(T.tableName) {
-            printl(message: "表已存在")
+//        if isExistTable(T.tableName) {
+//            printl(message: "表已存在")
 //            return
-        }
+//        }
         
         let mirrorType = T.initDummyInstance()
         let mirror = Mirror(reflecting: mirrorType)
@@ -171,70 +174,79 @@ class DatabaseManager {
     
     // 插入数据
     func insertOrUpdate<T: DatabaseTable>(object: T) throws {
-        let mirror = Mirror(reflecting: object)
-        var columns: [String] = []
-        var values: [Any] = []
-        
-        // 处理属性值
-        for child in mirror.children {
-            guard let label = child.label else { continue }
-            columns.append(label)
-            
-            let valueType = type(of: child.value)
-            
-            switch valueType {
-            case is String.Type, is Optional<String>.Type
-                , is Int.Type, is Int32.Type, is Int64.Type,
-                is Optional<Int>.Type, is Optional<Int32>.Type, is Optional<Int64>.Type
-                , is Double.Type, is Float.Type,
-                is Optional<Double>.Type, is Optional<Float>.Type:
-                values.append(child.value)
-            case is Bool.Type, is Optional<Bool>.Type:
-                values.append((child.value as? Bool ?? false) ? 1 : 0)
-            case is Codable.Type, is Optional<Codable>.Type:
-                if let codableValue = child.value as? Codable {
-                    if T.enumPropertyMapper.keys.contains(label),
-                        let enumType = T.enumPropertyMapper[label] {
-                        let rawRepresentableValue = child.value as? (any RawRepresentable)
-                        switch enumType {
-                        case .Int:
-                            if let intValue = rawRepresentableValue?.rawValue as? Int {
-                                values.append(intValue)
-                            }
-                        case .String:
-                            if let stringValue = rawRepresentableValue?.rawValue as? String {
-                                values.append(stringValue)
-                            }
-                        }
-                    } else {
-                        do {
-                            let data = try JSONEncoder().encode(codableValue)
-                            values.append(data)
-                        } catch {
-                            throw DatabaseError.encodingFailed
-                        }
-                    }
-                    
-                }
-            default:
-                throw DatabaseError.invalidType
-            }
-        }
-        
-        // 生成插入SQL
-        let insertSQL = generateInsertOrUpdateSQL(tableName: T.tableName, columns: columns)
-        
-        let reg = insertDataWithSQL(insertSQL, values: values)
-        if !reg {
-            printl(message: "insert \(T.tableName) failed")
-            throw DatabaseError.insertionFailed
-        }
+        try insertOrUpdate(objects: [object])
     }
     
     /// insert objects
     func insertOrUpdate<T: DatabaseTable>(objects: [T]) throws {
+        if !isExistTable(T.tableName) {
+            printl(message: "不存在表，开始创建")
+            try createTable(T.self)
+        }
+        
+        var insertTuples: [InsertTransactionTuple] = []
+        
         for object in objects {
-            try insertOrUpdate(object: object)
+            let mirror = Mirror(reflecting: object)
+            var columns: [String] = []
+            var values: [Any] = []
+            
+            // 处理属性值
+            for child in mirror.children {
+                guard let label = child.label else { continue }
+                columns.append(label)
+                
+                let valueType = type(of: child.value)
+                
+                switch valueType {
+                case is String.Type, is Optional<String>.Type
+                    , is Int.Type, is Int32.Type, is Int64.Type,
+                    is Optional<Int>.Type, is Optional<Int32>.Type, is Optional<Int64>.Type
+                    , is Double.Type, is Float.Type,
+                    is Optional<Double>.Type, is Optional<Float>.Type:
+                    values.append(child.value)
+                case is Bool.Type, is Optional<Bool>.Type:
+                    values.append((child.value as? Bool ?? false) ? 1 : 0)
+                case is Codable.Type, is Optional<Codable>.Type:
+                    if let codableValue = child.value as? Codable {
+                        if T.enumPropertyMapper.keys.contains(label),
+                            let enumType = T.enumPropertyMapper[label] {
+                            let rawRepresentableValue = child.value as? (any RawRepresentable)
+                            switch enumType {
+                            case .Int:
+                                if let intValue = rawRepresentableValue?.rawValue as? Int {
+                                    values.append(intValue)
+                                }
+                            case .String:
+                                if let stringValue = rawRepresentableValue?.rawValue as? String {
+                                    values.append(stringValue)
+                                }
+                            }
+                        } else {
+                            do {
+                                let data = try JSONEncoder().encode(codableValue)
+                                values.append(data)
+                            } catch {
+                                throw DatabaseError.encodingFailed
+                            }
+                        }
+                        
+                    }
+                default:
+                    throw DatabaseError.invalidType
+                }
+            }
+            
+            // 生成插入SQL
+            let insertSQL = generateInsertOrUpdateSQL(tableName: T.tableName, columns: columns)
+            
+            insertTuples.append((insertSQL, values))
+        }
+        
+        let reg = insertDataTransactionWithSQLTuples(insertTuples)
+        if !reg {
+            printl(message: "insert failed")
+            throw DatabaseError.insertionFailed
         }
     }
     
@@ -337,6 +349,22 @@ extension DatabaseManager {
             db.shouldCacheStatements = true
             result = db.executeUpdate(sql, withArgumentsIn: values)
             if db.hadError() {
+                printl(message: "error \(db.lastErrorCode()) : \(db.lastErrorMessage())")
+            }
+        }
+        return result
+    }
+    
+    fileprivate func insertDataTransactionWithSQLTuples(_ tuples: [InsertTransactionTuple]) -> Bool {
+        var result: Bool = true
+        db.inTransaction { db, rollback in
+            db.shouldCacheStatements = true
+            for tuple in tuples {
+                db.executeUpdate(tuple.sql, withArgumentsIn: tuple.values)
+            }
+            if db.hadError() {
+                result = false
+                rollback.pointee = true
                 printl(message: "error \(db.lastErrorCode()) : \(db.lastErrorMessage())")
             }
         }
