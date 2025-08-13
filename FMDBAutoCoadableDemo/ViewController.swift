@@ -16,7 +16,7 @@ class ViewController: UIViewController {
         
 //        testOneDataBase()
         
-//        testDataBaseArray()
+        testDataBaseArray()
         // Do any additional setup after loading the view.
     }
 
@@ -41,7 +41,7 @@ class ViewController: UIViewController {
             user.profile = [profile]
             user.isSelf = true
             user.fileType = .name
-            try dbManager.insert(object: user)
+            try dbManager.insertOrUpdate(object: user)
             
 //            _ = dbManager.deleteTable(from: User.tableName, otherSqlDic: [:])
             
@@ -81,7 +81,7 @@ class ViewController: UIViewController {
             }
             
             
-            try dbManager.insert(objects: results)
+            try dbManager.insertOrUpdate(objects: results)
             
 //            _ = dbManager.deleteTable(from: User.tableName, otherSqlDic: [:])
             

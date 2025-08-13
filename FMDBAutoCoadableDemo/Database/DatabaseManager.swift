@@ -170,7 +170,7 @@ class DatabaseManager {
     }
     
     // 插入数据
-    func insert<T: DatabaseTable>(object: T) throws {
+    func insertOrUpdate<T: DatabaseTable>(object: T) throws {
         let mirror = Mirror(reflecting: object)
         var columns: [String] = []
         var values: [Any] = []
@@ -222,7 +222,7 @@ class DatabaseManager {
         }
         
         // 生成插入SQL
-        let insertSQL = generateInsertSQL(tableName: T.tableName, columns: columns)
+        let insertSQL = generateInsertOrUpdateSQL(tableName: T.tableName, columns: columns)
         
         let reg = insertDataWithSQL(insertSQL, values: values)
         if !reg {
@@ -232,9 +232,9 @@ class DatabaseManager {
     }
     
     /// insert objects
-    func insert<T: DatabaseTable>(objects: [T]) throws {
+    func insertOrUpdate<T: DatabaseTable>(objects: [T]) throws {
         for object in objects {
-            try insert(object: object)
+            try insertOrUpdate(object: object)
         }
     }
     
@@ -375,7 +375,7 @@ extension DatabaseManager {
     }
     
     // 插入SQL语句
-    fileprivate func generateInsertSQL(tableName: String, columns: [String]) -> String {
+    fileprivate func generateInsertOrUpdateSQL(tableName: String, columns: [String]) -> String {
         let columnString = columns.joined(separator: ", ")
         let valuePlaceholders = Array(repeating: "?", count: columns.count).joined(separator: ", ")
         
