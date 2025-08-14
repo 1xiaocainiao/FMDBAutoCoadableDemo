@@ -173,15 +173,19 @@ class DatabaseManager {
     }
     
     // 插入数据
-    func insertOrUpdate<T: DatabaseTable>(object: T) throws {
-        try insertOrUpdate(objects: [object])
+    func insertOrUpdate<T: DatabaseTable>(object: T, clear: Bool = false) throws {
+        try insertOrUpdate(objects: [object], clear: clear)
     }
     
     /// insert objects
-    func insertOrUpdate<T: DatabaseTable>(objects: [T]) throws {
+    func insertOrUpdate<T: DatabaseTable>(objects: [T], clear: Bool = false) throws {
         if !isExistTable(T.tableName) {
             printl(message: "不存在表，开始创建")
             try createTable(T.self)
+        }
+        
+        if clear {
+            deleteTable(from: T.tableName)
         }
         
         var insertTuples: [InsertTransactionTuple] = []
@@ -300,7 +304,8 @@ class DatabaseManager {
         return results
     }
     
-    func deleteTable(from tableName: String, otherSqlDic sqlDic: [String: String]?) -> Bool {
+    @discardableResult
+    func deleteTable(from tableName: String, otherSqlDic sqlDic: [String: String]? = nil) -> Bool {
         var deleteSql = "DELETE FROM \(tableName)"
         
         if let sqlDic = sqlDic, !sqlDic.isEmpty {
