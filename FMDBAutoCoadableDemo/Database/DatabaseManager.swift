@@ -38,31 +38,39 @@ enum DatabaseError: Error {
 }
 
 /// 数据库存储model时包含枚举类型属性，暂时支持int string
-enum DBModelEnumType: Int {
+public enum DBModelEnumType: Int {
     case `Int`
     case `String`
 }
 
-protocol DummyInitializable {
+public protocol DummyInitializable {
     static func initDummyInstance() -> Self
 }
 
 extension DummyInitializable where Self: Codable {
-    static func initDummyInstance() -> Self {
+    public static func initDummyInstance() -> Self {
         let json = "{}".data(using: .utf8)!
         return try! JSONDecoder().decode(Self.self, from: json)
     }
 }
 
 // 数据库表协议
-protocol DatabaseTable: Codable, DummyInitializable {
+public protocol DatabaseTable: Codable, DummyInitializable {
     static var tableName: String { get }
     static func primaryKey() -> String
     /// 自定义枚举映射
     static var enumPropertyMapper: [String: DBModelEnumType] { get }
 }
 
-extension DatabaseTable {
+public extension DatabaseTable {
+    static var tableName: String {
+        return ""
+    }
+    
+    static func primaryKey() -> String {
+        return ""
+    }
+    
     static var enumPropertyMapper: [String: DBModelEnumType] {
         return [:]
     }
@@ -174,7 +182,7 @@ class DatabaseManager {
     
     // 插入数据
     func insertOrUpdate<T: DatabaseTable>(object: T, clear: Bool = false) throws {
-        try insertOrUpdate(objects: [object], clear: clear)
+        try insertOrUpdate(objects: [object])
     }
     
     /// insert objects
