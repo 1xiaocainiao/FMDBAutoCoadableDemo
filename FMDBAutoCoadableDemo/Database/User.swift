@@ -15,6 +15,7 @@ class User: DatabaseTable {
     var name: String?
     var profile: [Profile]? // 嵌套模型
     var isSelf: Bool?
+//    var avatar: String?
     
     var fileType: FilterType? // 自定义枚举
     

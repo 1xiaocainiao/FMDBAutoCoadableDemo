@@ -84,7 +84,10 @@ class DatabaseManager {
     /// fmdb transation insert tuple
     typealias InsertTransactionTuple = (sql: String, values: [Any])
     
-    private let db: FMDatabaseQueue
+    private let dbQueue: FMDatabaseQueue
+    
+    private let dbVersionKey = "DBVersion"
+    let newDBVersion = "2.0"
     
     init(userId: String? = nil) {
         let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -109,24 +112,37 @@ class DatabaseManager {
         printl(message: writableDBPath)
         
         if let db = FMDatabaseQueue(path: writableDBPath) {
-            self.db = db
+            self.dbQueue = db
         } else {
             printl(message: "打开数据库失败!")
-            db = FMDatabaseQueue()
+            dbQueue = FMDatabaseQueue()
         }
+        
+        checkAndUpgradeDatabase(newDBVersion: self.newDBVersion)
     }
     
     deinit {
-        db.close()
+        dbQueue.close()
     }
     
-    // 创建表
-    func createTable<T: DatabaseTable>(_ object: T.Type) throws {
-//        if isExistTable(T.tableName) {
-//            printl(message: "表已存在")
-//            return
-//        }
+    /// 建表，FMDatabase 参数为空时，内部会调用 dbQueue.inDatabase
+    func createTable<T: DatabaseTable>(_ object: T.Type, db: FMDatabase? = nil) throws {
+        //        if isExistTable(T.tableName) {
+        //            printl(message: "表已存在")
+        //            return
+        //        }
         
+        // 生成建表SQL
+        let sql = try createTableSql(object)
+        
+        let reg = insertDataWithSQL(sql, values: [], db: db)
+        if !reg {
+            printl(message: "create \(T.tableName) failed")
+            throw DatabaseError.tableCreationFailed
+        }
+    }
+    
+    func createTableSql<T: DatabaseTable>(_ object: T.Type) throws -> String {
         let mirrorType = T.initDummyInstance()
         let mirror = Mirror(reflecting: mirrorType)
         var columns: [DBColumnInfo] = []
@@ -153,7 +169,7 @@ class DatabaseManager {
                 columnType = .bool
             case is Codable.Type, is Optional<Codable>.Type:
                 if T.enumPropertyMapper.keys.contains(label),
-                    let enumType = T.enumPropertyMapper[label] {
+                   let enumType = T.enumPropertyMapper[label] {
                     switch enumType {
                     case .Int:
                         columnType = .integer
@@ -169,15 +185,8 @@ class DatabaseManager {
             
             columns.append(DBColumnInfo(name: label, type: columnType, isPrimaryKey: isPrimaryKey))
         }
-        
-        // 生成建表SQL
         let createSQL = generateCreateTableSQL(tableName: T.tableName, columns: columns)
-        
-        let reg = insertDataWithSQL(createSQL, values: [])
-        if !reg {
-            printl(message: "create \(T.tableName) failed")
-            throw DatabaseError.tableCreationFailed
-        }
+        return createSQL
     }
     
     // 插入数据
@@ -187,10 +196,10 @@ class DatabaseManager {
     
     /// insert objects
     func insertOrUpdate<T: DatabaseTable>(objects: [T], clear: Bool = false) throws {
-        if !isExistTable(T.tableName) {
-            printl(message: "不存在表，开始创建")
-            try createTable(T.self)
-        }
+//        if !isExistTable(T.tableName) {
+//            printl(message: "不存在表，开始创建")
+//            try createTable(T.self)
+//        }
         
         if clear {
             deleteTable(from: T.tableName)
@@ -222,7 +231,7 @@ class DatabaseManager {
                 case is Codable.Type, is Optional<Codable>.Type:
                     if let codableValue = child.value as? Codable {
                         if T.enumPropertyMapper.keys.contains(label),
-                            let enumType = T.enumPropertyMapper[label] {
+                           let enumType = T.enumPropertyMapper[label] {
                             let rawRepresentableValue = child.value as? (any RawRepresentable)
                             switch enumType {
                             case .Int:
@@ -328,7 +337,7 @@ class DatabaseManager {
         
         return deleteDataWithSQL(deleteSql, values: [])
     }
-
+    
 }
 
 // MARK: - sql语句拼接，以及执行
@@ -336,7 +345,7 @@ extension DatabaseManager {
     /// 查询
     fileprivate func getDataBySQL(_ sql: String, values: [Any]) -> [[String: Any]] {
         var results: [[String: Any]] = []
-        db.inDatabase { db in
+        dbQueue.inDatabase { db in
             db.shouldCacheStatements = true
             guard let resultSet = db.executeQuery(sql, withArgumentsIn: values) else {
                 printl(message: "未从数据库查询到数据")
@@ -356,21 +365,30 @@ extension DatabaseManager {
     }
     
     // 插入
-    fileprivate func insertDataWithSQL(_ sql: String, values: [Any]) -> Bool {
+    fileprivate func insertDataWithSQL(_ sql: String, values: [Any], db: FMDatabase? = nil) -> Bool {
         var result: Bool = true
-        db.inDatabase { db in
+        if let db = db {
+            excuting(db: db)
+        } else {
+            dbQueue.inDatabase { db in
+                excuting(db: db)
+            }
+        }
+        
+        func excuting(db: FMDatabase) {
             db.shouldCacheStatements = true
             result = db.executeUpdate(sql, withArgumentsIn: values)
             if db.hadError() {
                 printl(message: "error \(db.lastErrorCode()) : \(db.lastErrorMessage())")
             }
         }
+        
         return result
     }
     
     fileprivate func insertDataTransactionWithSQLTuples(_ tuples: [InsertTransactionTuple]) -> Bool {
         var result: Bool = true
-        db.inTransaction { db, rollback in
+        dbQueue.inTransaction { db, rollback in
             db.shouldCacheStatements = true
             for tuple in tuples {
                 db.executeUpdate(tuple.sql, withArgumentsIn: tuple.values)
@@ -387,7 +405,7 @@ extension DatabaseManager {
     // 删除
     fileprivate func deleteDataWithSQL(_ sql: String, values: [Any]) -> Bool {
         var result: Bool = true
-        db.inDatabase { db in
+        dbQueue.inDatabase { db in
             db.shouldCacheStatements = true
             result = db.executeUpdate(sql, withArgumentsIn: values)
             if db.hadError() {
@@ -440,7 +458,7 @@ extension DatabaseManager {
     func isExistTable(_ tableName: String) -> Bool {
         let sql = "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='\(tableName)'"
         let arr = getDataBySQL(sql, values: [])
-
+        
         guard arr.count > 0 else {
             return false
         }
@@ -451,7 +469,7 @@ extension DatabaseManager {
         
         return false
     }
-
+    
     // 清理缓存 直接删除的数据库
     class func updateVersionCleanCache() {
         DispatchQueue.global(qos: .default).async {
@@ -466,22 +484,22 @@ extension DatabaseManager {
                         let fullPath = (documentsDirectory as NSString).appendingPathComponent(tempPath)
                         do {
                             try fileManager.removeItem(atPath: fullPath)
-                            print("Remove \(tempPath) Success")
+                            printl(message: "Remove \(tempPath) Success")
                         } catch {
-                            print("Error removing \(tempPath): \(error.localizedDescription)")
+                            printl(message: "Error removing \(tempPath): \(error.localizedDescription)")
                         }
                     }
                 }
             } catch {
-                print("Error retrieving contents of directory: \(error.localizedDescription)")
+                printl(message: "Error retrieving contents of directory: \(error.localizedDescription)")
             }
         }
     }
-
+    
     static func deleteFoldersContainingDB() {
         DispatchQueue.global(qos: .default).async {
             guard let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
-                print("无法获取 Caches 目录")
+                printl(message: "无法获取 Caches 目录")
                 return
             }
             
@@ -497,15 +515,144 @@ extension DatabaseManager {
                     if let isDirectory = resourceValues.isDirectory, isDirectory,
                        url.lastPathComponent.contains("DB") {
                         try FileManager.default.removeItem(at: url)
-                        print("✅ 已删除文件夹: \(url.lastPathComponent)")
+                        printl(message: "✅ 已删除文件夹: \(url.lastPathComponent)")
                     }
                 }
             } catch {
-                print("❌ 操作失败: \(error.localizedDescription)")
+                printl(message: "❌ 操作失败: \(error.localizedDescription)")
             }
         }
     }
 }
+
+// MARK: - 数据库升级
+extension DatabaseManager {
+    /// 子类重写：创建表
+    func createTables(in db: FMDatabase) {
+        try? createTable(User.self, db: db)
+    }
+    
+    private func checkAndUpgradeDatabase(newDBVersion: String) {
+        let oldVersion = UserDefaults.standard.string(forKey: dbVersionKey) ?? ""
+        printl(message: "数据库版本: 旧 \(oldVersion) -> 新 \(newDBVersion)")
+        
+        if !oldVersion.isEmpty, oldVersion != newDBVersion {
+            printl(message: "升级数据库")
+            
+            dbQueue.inDatabase { db in
+                // 1. 获取旧表名
+                let oldTables = self.getExistingTables(in: db)
+                
+                var backupTables: [String] = []
+                
+                // 2. 重命名旧表为 _bak
+                for tableName in oldTables {
+                    let backupName = tableName + "_bak"
+                    let sql = "ALTER TABLE \(tableName) RENAME TO \(backupName)"
+                    if db.executeUpdate(sql, withArgumentsIn: []) {
+                        backupTables.append(backupName)
+                        printl(message: "🔄 表 \(tableName) 已备份为 \(backupName)")
+                    } else {
+                        printl(message: "❌ 备份失败: \(db.lastErrorMessage())")
+                    }
+                }
+                
+                self.createTables(in: db)
+                
+                // 获取新表名
+                let newTables = self.getNewTables(in: db)
+                
+                for newTableName in newTables {
+                    let backupName = newTableName + "_bak"
+                    if backupTables.contains(backupName) {
+                        let oldCols = self.getTableColumns(tableName: backupName, in: db)
+                        let newCols = self.getTableColumns(tableName: newTableName, in: db)
+                        let commonCols = oldCols.intersection(newCols).sorted()
+                        
+                        if !commonCols.isEmpty {
+                            let cols = commonCols.joined(separator: ", ")
+                            let insertSQL = """
+                                    INSERT INTO \(newTableName)(\(cols))
+                                    SELECT \(cols) FROM \(backupName)
+                                """
+                            if db.executeUpdate(insertSQL, withArgumentsIn: []) {
+                                printl(message: "✅ 数据从 \(backupName) 迁移到 \(newTableName)，字段: \(cols)")
+                            } else {
+                                printl(message: "❌ 数据迁移失败: \(db.lastErrorMessage())")
+                            }
+                        }
+                    }
+                }
+                
+                // 删除所有备份表
+                db.beginTransaction()
+                for backupTable in backupTables {
+                    let dropSQL = "DROP TABLE IF EXISTS \(backupTable)"
+                    db.executeUpdate(dropSQL, withArgumentsIn: [])
+                }
+                db.commit()
+                
+                UserDefaults.standard.set(newDBVersion, forKey: dbVersionKey)
+                
+                printl(message: "数据库升级完成")
+            }
+        } else {
+            printl(message: "初始化数据库")
+            dbQueue.inDatabase { db in
+                self.createTables(in: db)
+                
+                UserDefaults.standard.set(newDBVersion, forKey: dbVersionKey)
+            }
+        }
+    }
+    
+    private func getExistingTables(in db: FMDatabase) -> [String] {
+        var tables: [String] = []
+        let sql = "SELECT name FROM sqlite_master WHERE type='table'"
+        
+        if let rs = db.executeQuery(sql, withArgumentsIn: []) {
+            while rs.next() {
+                if let name = rs.string(forColumn: "name") {
+                    tables.append(name)
+                    printl(message: "🔍 发现表: \(name)")
+                }
+            }
+            rs.close()
+        } else {
+            printl(message: "❌ 查询表失败: \(db.lastErrorMessage())")
+        }
+        
+        printl(message: "📊 共发现 \(tables.count) 个表: \(tables)")
+        return tables
+    }
+    
+    private func getNewTables(in db: FMDatabase) -> [String] {
+        var tables: [String] = []
+        let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '%_bak'"
+        if let rs = db.executeQuery(sql, withArgumentsIn: []) {
+            while rs.next() {
+                if let name = rs.string(forColumn: "name") {
+                    tables.append(name)
+                }
+            }
+        }
+        return tables
+    }
+    
+    private func getTableColumns(tableName: String, in db: FMDatabase) -> Set<String> {
+        var columns: Set<String> = []
+        let sql = "PRAGMA table_info(\(tableName))"
+        if let rs = db.executeQuery(sql, withArgumentsIn: []) {
+            while rs.next() {
+                if let colName = rs.string(forColumn: "name") {
+                    columns.insert(colName)
+                }
+            }
+        }
+        return columns
+    }
+}
+
 
 // MARK: - data扩展
 extension Data {

@@ -8,6 +8,7 @@
 import UIKit
 
 class ViewController: UIViewController {
+    var dbManager: DatabaseManager!
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -16,13 +17,17 @@ class ViewController: UIViewController {
         
 //        testOneDataBase()
         
-        testDataBaseArray()
+        dbManager = DatabaseManager()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0) {
+            self.testDataBaseArray()
+            
+//            self.testUpdateDB()
+        }
         // Do any additional setup after loading the view.
     }
 
     func testOneDataBase() {
         do {
-            let dbManager = DatabaseManager()
             
 //            // 创建表
 //            try dbManager.createTable(User.self)
@@ -55,7 +60,6 @@ class ViewController: UIViewController {
     
     func testDataBaseArray() {
         do {
-            let dbManager = DatabaseManager(userId: "789456")
             
 //            // 创建表
 //            try dbManager.createTable(User.self)
@@ -88,6 +92,17 @@ class ViewController: UIViewController {
             let temp: [User] = try dbManager.query()
             print(temp)
             
+        } catch {
+            print("Error: \(error)")
+        }
+    }
+    
+    func testUpdateDB() {
+        let dbManager = DatabaseManager()
+        
+        do {
+            let temp: [User] = try dbManager.query()
+            print(temp)
         } catch {
             print("Error: \(error)")
         }
