@@ -324,7 +324,7 @@ class DatabaseManager {
             }
         }
         
-        print("Delete data SQL: \(deleteSql)")
+        printl(message: "Delete data SQL: \(deleteSql)")
         
         return deleteDataWithSQL(deleteSql, values: [])
     }
